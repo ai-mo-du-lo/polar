@@ -1,0 +1,178 @@
+# FixBugs demo stack: Polar API + worker with local monitoring, one command.
+#
+#   docker compose -f dev/docker/docker-compose.demo.yml up -d --wait
+#
+# Trimmed from docker-compose.dev.yml + server/docker-compose.yml:
+# no web, tinybird, localstack. Host ports use the 1xxxx range so the
+# stack runs next to other local stacks.
+#
+#   Locust ──► api :18000 ──remote write──► prometheus :19090 ──► alertmanager :19093
+#                 │                              │
+#                 └── Sentry (POLAR_SENTRY_DSN)  └── grafana :13001
+#
+# Credentials below are Polar's public local-dev defaults. Real secrets
+# (Sentry DSN, Stripe test keys) come from the host environment, which the
+# FixBugs wrapper fills from Infisical.
+name: polar-demo
+
+x-backend-env: &backend-env
+  POLAR_ENV: development
+  POLAR_LOG_LEVEL: INFO
+  POLAR_TESTING: "0"
+  POLAR_POSTGRES_USER: polar
+  POLAR_POSTGRES_PWD: polar
+  POLAR_POSTGRES_HOST: db
+  POLAR_POSTGRES_PORT: "5432"
+  POLAR_POSTGRES_DATABASE: polar
+  POLAR_POSTGRES_READ_USER: polar_read
+  POLAR_POSTGRES_READ_PWD: polar
+  POLAR_POSTGRES_READ_HOST: db
+  POLAR_POSTGRES_READ_PORT: "5432"
+  POLAR_POSTGRES_READ_DATABASE: polar
+  POLAR_REDIS_HOST: redis
+  POLAR_REDIS_PORT: "6379"
+  POLAR_REDIS_DB: "0"
+  POLAR_S3_ENDPOINT_URL: http://minio:9000
+  POLAR_S3_PUBLIC_ENDPOINT_URL: http://localhost:19000
+  POLAR_AWS_ACCESS_KEY_ID: polar-development
+  POLAR_AWS_SECRET_ACCESS_KEY: polar123456789
+  POLAR_S3_FILES_BUCKET_NAME: polar-s3
+  POLAR_S3_FILES_PUBLIC_BUCKET_NAME: polar-s3-public
+  POLAR_S3_CUSTOMER_INVOICES_BUCKET_NAME: polar-s3
+  POLAR_S3_CUSTOMER_RECEIPTS_BUCKET_NAME: polar-s3
+  POLAR_S3_PAYOUT_INVOICES_BUCKET_NAME: polar-s3
+  POLAR_BASE_URL: http://localhost:18000
+  POLAR_FRONTEND_BASE_URL: http://localhost:13000
+  POLAR_CHECKOUT_BASE_URL: http://localhost:18000/v1/checkout-links/{client_secret}/redirect
+  POLAR_CORS_ORIGINS: '["http://localhost:13000"]'
+  POLAR_ALLOWED_HOSTS: '["localhost:13000"]'
+  POLAR_USER_SESSION_COOKIE_DOMAIN: localhost
+  POLAR_AUTHENTICATION_SESSION_COOKIE_DOMAIN: localhost
+  POLAR_TURNSTILE_SECRET: "1x0000000000000000000000000000000AA"
+  AUTHLIB_INSECURE_TRANSPORT: "true"
+  # Tinybird is dropped; an empty URL makes startup.sh skip token discovery.
+  POLAR_TINYBIRD_CLICKHOUSE_URL: ""
+  # Metrics: push to the local Prometheus every 5 s.
+  POLAR_GRAFANA_CLOUD_PROMETHEUS_WRITE_URL: http://prometheus:9090/api/v1/write
+  POLAR_GRAFANA_CLOUD_PROMETHEUS_WRITE_INTERVAL: "5"
+  # From Infisical via the host environment; empty disables Sentry/Stripe.
+  POLAR_SENTRY_DSN: ${POLAR_DEMO_SENTRY_DSN:-}
+  POLAR_STRIPE_SECRET_KEY: ${POLAR_STRIPE_SECRET_KEY:-unset}
+  POLAR_STRIPE_PUBLISHABLE_KEY: ${POLAR_STRIPE_PUBLISHABLE_KEY:-unset}
+  POLAR_STRIPE_WEBHOOK_SECRET: ${POLAR_STRIPE_WEBHOOK_SECRET:-unset}
+  POLAR_STRIPE_CONNECT_WEBHOOK_SECRET: ${POLAR_STRIPE_CONNECT_WEBHOOK_SECRET:-unset}
+
+x-backend: &backend
+  build:
+    context: ../..
+    dockerfile: dev/docker/Dockerfile.api.dev
+  environment: *backend-env
+  depends_on:
+    db: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    minio: { condition: service_healthy }
+
+services:
+  db:
+    image: postgres:15.1-bullseye
+    command: ["postgres", "-c", "max_locks_per_transaction=256"]
+    environment:
+      POSTGRES_USER: polar
+      POSTGRES_PASSWORD: polar
+      POSTGRES_DB: polar
+      POLAR_READ_USER: polar_read
+      POLAR_READ_PASSWORD: polar
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ../../server/init-readonly-user.sql:/docker-entrypoint-initdb.d/init-readonly-user.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "polar", "-U", "polar"]
+      interval: 2s
+      retries: 20
+
+  redis:
+    image: redis:alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 10
+
+  # Kept: api startup creates its S3 buckets here and fails without it.
+  minio:
+    image: bitnamilegacy/minio:2024.5.28
+    ports: ["19000:9000"]
+    environment:
+      MINIO_ROOT_USER: polar-development
+      MINIO_ROOT_PASSWORD: polar123456789
+    volumes: ["minio_data:/bitnami/minio/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      retries: 10
+
+  api:
+    <<: *backend
+    command: ["api"]
+    ports: ["18000:8000"]
+    volumes:
+      - ../../server:/app/server:cached
+      - ../../dev:/app/dev:cached
+      - uv_cache:/root/.cache/uv
+      - api_venv:/app/server/.venv
+      - pnpm_store:/root/.local/share/pnpm/store
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 900s
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    volumes:
+      - ../../server:/app/server:cached
+      - ../../dev:/app/dev:cached
+      - uv_cache:/root/.cache/uv
+      - worker_venv:/app/server/.venv
+      - pnpm_store:/root/.local/share/pnpm/store
+    depends_on:
+      api: { condition: service_started }
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    ports: ["19090:9090"]
+    volumes:
+      - ./demo/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./demo/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=2d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver"
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    ports: ["19093:9093"]
+    volumes:
+      - ./demo/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:12.3.0
+    ports: ["13001:3000"]
+    volumes:
+      - ../../server/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../server/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: polar
+      GF_SECURITY_ADMIN_PASSWORD: polar
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on: [prometheus]
+
+volumes:
+  postgres_data:
+  minio_data:
+  uv_cache:
+  api_venv:
+  worker_venv:
+  pnpm_store:

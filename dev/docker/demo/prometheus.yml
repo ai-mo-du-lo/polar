@@ -1,0 +1,7 @@
+# Polar pushes metrics by remote write; Prometheus only evaluates rules.
+global:
+  evaluation_interval: 15s
+rule_files: [/etc/prometheus/alert-rules.yml]
+alerting:
+  alertmanagers:
+    - static_configs: [{ targets: ["alertmanager:9093"] }]

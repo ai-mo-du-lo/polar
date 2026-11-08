@@ -2630,11 +2630,7 @@ class SubscriptionService:
                 new_amount=subscription.amount,
             )
 
-            if (
-                proration_behavior.is_immediate()
-                and not subscription.trialing
-                and billing_entries
-            ):
+            if proration_behavior.is_immediate() and not subscription.trialing:
                 # Invoice and attempt to pay immediately
                 ctx.set_billing_effect("invoice")
 

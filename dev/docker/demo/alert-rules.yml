@@ -1,0 +1,21 @@
+groups:
+  - name: polar-api
+    rules:
+      # Any 5xx on an endpoint in the last 2 minutes, one alert per endpoint
+      # so each reverted bug raises its own alert. increase() ignores the
+      # first sample of a new series, so the `or` arm catches an endpoint's
+      # first-ever 5xx (a single booth request).
+      - alert: PolarEndpoint5xx
+        expr: |
+          sum by (endpoint, method) (increase(polar_http_request_total{status_code=~"5.."}[2m])) > 0
+          or
+          sum by (endpoint, method) (
+            polar_http_request_total{status_code=~"5.."}
+            unless polar_http_request_total{status_code=~"5.."} offset 2m
+          ) > 0
+        labels:
+          severity: critical
+          service: polar-api
+        annotations:
+          summary: "{{ $labels.method }} {{ $labels.endpoint }} returns 5xx"
+          description: "Server errors on {{ $labels.method }} {{ $labels.endpoint }} in the last 2 minutes."

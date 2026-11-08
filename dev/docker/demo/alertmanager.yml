@@ -1,0 +1,6 @@
+# FixBugs reads alerts through the Alertmanager API; no receiver needed.
+route:
+  receiver: "null"
+  group_by: [alertname, endpoint]
+receivers:
+  - name: "null"

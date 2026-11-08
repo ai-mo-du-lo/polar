@@ -151,12 +151,7 @@ class CustomerRepository(
 
             changed, value = _get_changed_value(inspection, "billing_address")
             if changed:
-                if value is None:
-                    updated_fields["billing_address"] = None
-                else:
-                    updated_fields["billing_address"] = Address.model_validate(
-                        value
-                    ).to_dict()
+                updated_fields["billing_address"] = value.to_dict() if value else None
 
             changed, value = _get_changed_value(inspection, "tax_id")
             if changed:
