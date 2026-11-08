@@ -130,6 +130,11 @@ services:
   worker:
     <<: *backend
     command: ["worker"]
+    # No Sentry from the worker: its hourly Stripe sync fails without real
+    # Stripe keys and would add a non-demo issue to FixBugs Active Alerts.
+    environment:
+      <<: *backend-env
+      POLAR_SENTRY_DSN: ""
     volumes:
       - ../../server:/app/server:cached
       - ../../dev:/app/dev:cached
@@ -168,6 +173,20 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: polar
       GF_USERS_ALLOW_SIGN_UP: "false"
     depends_on: [prometheus]
+
+  # Load generator, started on demand by FixBugs' `tools/demo-stack/cli.mjs load`
+  # (profile keeps it out of `up`). Token and seed ids come from that process.
+  locust:
+    image: locustio/locust:2.31.8
+    profiles: ["load"]
+    volumes:
+      - ./demo/locustfile.py:/mnt/locust/locustfile.py:ro
+    environment:
+      POLAR_DEMO_TOKEN: ${POLAR_DEMO_TOKEN:-}
+      DEMO_SEED: ${DEMO_SEED:-}
+    command: ["-f", "/mnt/locust/locustfile.py", "--headless", "--host", "http://api:8000", "--only-summary"]
+    depends_on:
+      api: { condition: service_healthy }
 
 volumes:
   postgres_data:

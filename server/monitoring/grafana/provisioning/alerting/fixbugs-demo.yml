@@ -1,0 +1,44 @@
+# FixBugs demo: Grafana-managed copy of the PolarEndpoint5xx Prometheus rule
+# (dev/docker/demo/alert-rules.yml), so the Grafana alert source in FixBugs
+# lists the same alert. Keep the two expressions identical.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: polar-api
+    folder: FixBugs demo
+    interval: 10s
+    rules:
+      - uid: polar-endpoint-5xx
+        title: PolarEndpoint5xx
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: |
+                sum by (endpoint, method) (increase(polar_http_request_total{status_code=~"5.."}[2m])) > 0
+                or
+                sum by (endpoint, method) (
+                  polar_http_request_total{status_code=~"5.."}
+                  unless polar_http_request_total{status_code=~"5.."} offset 2m
+                ) > 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: critical
+          service: polar-api
+        annotations:
+          summary: "{{ $labels.method }} {{ $labels.endpoint }} returns 5xx"
+          description: "Server errors on {{ $labels.method }} {{ $labels.endpoint }} in the last 2 minutes."

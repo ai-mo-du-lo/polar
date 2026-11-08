@@ -149,7 +149,12 @@ class Logging[RendererType]:
 class Development(Logging[structlog.dev.ConsoleRenderer]):
     @classmethod
     def get_renderer(cls) -> structlog.dev.ConsoleRenderer:
-        return structlog.dev.ConsoleRenderer(colors=True)
+        # No locals: rendering them printed ~100k lines per exception and
+        # blocked the event loop for tens of seconds (FixBugs demo stack).
+        return structlog.dev.ConsoleRenderer(
+            colors=True,
+            exception_formatter=structlog.dev.RichTracebackFormatter(show_locals=False),
+        )
 
 
 class Production(Logging[structlog.processors.JSONRenderer]):
