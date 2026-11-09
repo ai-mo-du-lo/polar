@@ -163,7 +163,8 @@ services:
       - ./demo/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
 
   grafana:
-    image: grafana/grafana:12.3.0
+    # FixBugs' Grafana alert source accepts exactly 13.0.2 (version-gated).
+    image: grafana/grafana:13.0.2
     ports: ["13001:3000"]
     volumes:
       - ../../server/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
