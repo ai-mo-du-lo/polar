@@ -40,7 +40,8 @@ groups:
         labels:
           severity: critical
           service: polar-api
-          environment: "{{ $labels.env }}"
+          # Provisioning expands $VARs in labels, so `.Labels`, not `$labels`.
+          environment: "{{ .Labels.env }}"
         annotations:
           summary: "{{ $labels.method }} {{ $labels.endpoint }} returns 5xx"
           description: "Server errors on {{ $labels.method }} {{ $labels.endpoint }} in the last 2 minutes."
