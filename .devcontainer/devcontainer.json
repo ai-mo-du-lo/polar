@@ -1,0 +1,7 @@
+{
+  // FixBugs "Local, container" for the Polar demo workspace (D135).
+  // The demo setup writes this folder into <workspace>/.devcontainer/ and
+  // git-excludes it; FixBugs builds the image once and reuses it.
+  "name": "polar-fixbugs-demo",
+  "build": { "dockerfile": "Dockerfile", "context": "." }
+}
