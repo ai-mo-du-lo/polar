@@ -219,6 +219,64 @@ class TestBeforeSend:
         assert request["data"] == "raw-body"
 
 
+class TestRequestTags:
+    """The request is copied into tags: FixBugs reads event tags, not the request entry."""
+
+    def test_tags_method_path_and_scrubbed_body(self) -> None:
+        event = {
+            "request": {
+                "url": "https://api.polar.sh/v1/subscriptions/sub-1?customer_email=buyer@example.com",
+                "method": "PATCH",
+                "data": {
+                    "product_id": "prod-2",
+                    "proration_behavior": "prorate",
+                    "customer_email": "buyer@example.com",
+                },
+            }
+        }
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        tags = cast(dict[str, Any], result["tags"])
+        assert tags["request.method"] == "PATCH"
+        assert tags["request.path"] == "/v1/subscriptions/sub-1"
+        assert tags["request.body"] == (
+            '{"product_id": "prod-2", "proration_behavior": "prorate"}'
+        )
+        assert "sub-1" not in str(cast(dict[str, Any], result["request"])["url"])
+
+    def test_truncates_body_to_the_tag_value_limit(self) -> None:
+        event = {"request": {"method": "POST", "data": {"note": "x" * 500}}}
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        assert len(cast(dict[str, Any], result["tags"])["request.body"]) == 200
+
+    def test_keeps_existing_tags(self) -> None:
+        event = {
+            "tags": {"correlation_id": "c-1"},
+            "request": {"method": "GET", "url": "https://api.polar.sh/v1/x"},
+        }
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        tags = cast(dict[str, Any], result["tags"])
+        assert tags["correlation_id"] == "c-1"
+        assert tags["request.path"] == "/v1/x"
+        assert "request.body" not in tags
+
+    def test_no_request_adds_no_tags(self) -> None:
+        event: dict[str, object] = {"message": "failed"}
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        assert "tags" not in result
+
+
 def _log_record(msg: object) -> logging.LogRecord:
     return logging.LogRecord("polar.test", logging.INFO, __file__, 1, msg, (), None)
 
