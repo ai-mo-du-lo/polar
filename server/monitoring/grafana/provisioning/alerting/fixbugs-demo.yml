@@ -20,9 +20,9 @@ groups:
               refId: A
               instant: true
               expr: &polar_5xx_expr |
-                sum by (endpoint, method, env) (increase(polar_http_request_total{status_code=~"5.."}[2m])) > 0
+                sum by (endpoint, method, env, exception) (increase(polar_http_request_total{status_code=~"5.."}[2m])) > 0
                 or
-                sum by (endpoint, method, env) (
+                sum by (endpoint, method, env, exception) (
                   polar_http_request_total{status_code=~"5.."}
                   unless polar_http_request_total{status_code=~"5.."} offset 2m
                 ) > 0
@@ -46,4 +46,5 @@ groups:
           summary: "{{ $labels.method }} {{ $labels.endpoint }} returns 5xx"
           description: "Server errors on {{ $labels.method }} {{ $labels.endpoint }} in the last 2 minutes."
           expression: *polar_5xx_expr
-          rule_revision: "2026-11-17.1"
+          rule_revision: "2026-11-18.1"
+          exception: "{{ $labels.exception }}"

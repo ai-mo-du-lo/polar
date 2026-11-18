@@ -10,6 +10,7 @@ unbounded label values.
 """
 
 import time
+from types import TracebackType
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -18,6 +19,35 @@ from polar.observability.http_metrics import (
     HTTP_REQUEST_TOTAL,
 )
 from polar.observability.utils import get_path_template
+
+POLAR_PACKAGE_PREFIX = "polar."
+
+
+def describe_exception(exc: BaseException) -> str:
+    """
+    Name an unhandled exception for the `exception` metric label.
+
+    The innermost frame in the polar package is where polar code handed
+    control to the failing call, e.g.
+    "IntegrityError in polar.subscription.service:update_product".
+    Without a polar frame, only the type is given.
+    """
+    name = type(exc).__name__
+    site = None
+
+    tb: TracebackType | None = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        module = frame.f_globals.get("__name__", "")
+        # This middleware's own frame is on every traceback; skip it.
+        if module.startswith(POLAR_PACKAGE_PREFIX) and module != __name__:
+            site = f"{module}:{frame.f_code.co_name}"
+        tb = tb.tb_next
+
+    if site is None:
+        return name
+
+    return f"{name} in {site}"
 
 
 class HttpMetricsMiddleware:
@@ -38,6 +68,7 @@ class HttpMetricsMiddleware:
 
         start_time = time.perf_counter()
         status_code = "500"  # Default in case of unhandled exception
+        exception = ""
 
         async def send_wrapper(message: Message) -> None:
             nonlocal status_code
@@ -47,6 +78,9 @@ class HttpMetricsMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            exception = describe_exception(exc)
+            raise
         finally:
             # Route is now populated by FastAPI (after routing completed)
             path_template = get_path_template(scope)
@@ -64,6 +98,7 @@ class HttpMetricsMiddleware:
                     status_code=status_code,
                     api_version=api_version,
                     api_version_set=api_version_set,
+                    exception=exception,
                 ).inc()
 
                 HTTP_REQUEST_DURATION_SECONDS.labels(

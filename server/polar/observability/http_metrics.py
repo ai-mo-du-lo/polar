@@ -5,7 +5,7 @@ These metrics track all HTTP endpoints (except those in METRICS_DENY_LIST
 or belonging to METRICS_EXCLUDED_APPS) for availability and latency SLIs.
 
 Metrics:
-- polar_http_request_total: Counter by endpoint, method, status_code, api_version, api_version_set
+- polar_http_request_total: Counter by endpoint, method, status_code, api_version, api_version_set, exception
 - polar_http_request_duration_seconds: Histogram by endpoint, method, api_version, api_version_set
 """
 
@@ -52,10 +52,20 @@ def exclude_app_from_metrics(app: "ASGIApp") -> None:
 # - endpoint: normalized path template (e.g., "/v1/checkouts/{id}")
 # - method: HTTP method (GET, POST, etc.)
 # - status_code: HTTP status code as string
+# - exception: unhandled exception type and the innermost polar function that
+#   raised it ("IntegrityError in polar.subscription.service:update_product");
+#   empty when the request raised nothing. Bounded by code sites, not requests.
 HTTP_REQUEST_TOTAL = Counter(
     "polar_http_request_total",
     "Total number of HTTP requests",
-    ["endpoint", "method", "status_code", "api_version", "api_version_set"],
+    [
+        "endpoint",
+        "method",
+        "status_code",
+        "api_version",
+        "api_version_set",
+        "exception",
+    ],
 )
 
 # HTTP request duration histogram for latency SLI

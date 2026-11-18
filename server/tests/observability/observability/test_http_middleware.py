@@ -6,6 +6,7 @@ database and service connections during unit testing.
 
 import os
 import tempfile
+import types
 from collections.abc import Generator
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -247,3 +248,77 @@ class TestMiddlewareASGIBehavior:
             await middleware(scope, cast(Receive, None), cast(Send, mock_send))
 
             assert any(m.get("status") == status for m in captured)
+
+
+def update_product() -> None:
+    raise exc  # type: ignore[name-defined]  # noqa: F821
+
+
+def _raise_from_module(module: str, exc: Exception) -> Any:
+    """Return `update_product` whose frame reports `module` as its module."""
+    namespace: dict[str, Any] = {"__name__": module, "exc": exc}
+    return types.FunctionType(update_product.__code__, namespace, "update_product")
+
+
+@pytest.mark.anyio
+class TestExceptionLabel:
+    """5xx samples name the exception and the innermost polar function."""
+
+    async def _count(
+        self, module: str, exc: Exception, path: str, exception: str
+    ) -> float:
+        from polar.observability.http_metrics import HTTP_REQUEST_TOTAL
+        from polar.observability.http_middleware import HttpMetricsMiddleware
+
+        raiser = _raise_from_module(module, exc)
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            raiser()
+
+        scope = cast(
+            Scope,
+            {
+                "type": "http",
+                "path": path,
+                "method": "PATCH",
+                "route": type("Route", (), {"path": path})(),
+            },
+        )
+
+        async def noop_send(message: dict[str, Any]) -> None:
+            pass
+
+        with pytest.raises(type(exc), match=str(exc)):
+            await HttpMetricsMiddleware(app)(
+                scope, cast(Receive, None), cast(Send, noop_send)
+            )
+
+        sample = HTTP_REQUEST_TOTAL.labels(
+            endpoint=path,
+            method="PATCH",
+            status_code="500",
+            api_version="",
+            api_version_set="false",
+            exception=exception,
+        )
+        return sample._value.get()
+
+    async def test_names_innermost_polar_frame(self) -> None:
+        count = await self._count(
+            "polar.subscription.service",
+            LookupError("duplicate key"),
+            "/v1/test-exception-label/{id}",
+            "LookupError in polar.subscription.service:update_product",
+        )
+
+        assert count == 1
+
+    async def test_no_polar_frame_names_type_only(self) -> None:
+        count = await self._count(
+            "sqlalchemy.engine",
+            ValueError("no polar frame"),
+            "/v1/test-exception-label-bare/{id}",
+            "ValueError",
+        )
+
+        assert count == 1
