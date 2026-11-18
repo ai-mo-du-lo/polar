@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
@@ -29,6 +30,13 @@ if TYPE_CHECKING:
 POSTHOG_ID_TAG = "posthog_distinct_id"
 # Sentry rejects longer tag values (docs: "Tags", Python SDK).
 TAG_VALUE_MAX = 200
+# Request values copied into tags must be ids or route/enum words, e.g.
+# 0b6f0b6e-6c1e-4f8e-9d5a-2f1c3e4d5a6b or "prorate"; anything else (secrets,
+# names, addresses) is redacted.
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_WORD = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+REDACTED = "{redacted}"
+OMITTED = "{omitted}"
 # Personal data, secrets, and merchant-supplied values on request bodies and
 # log breadcrumbs. Keys are matched as they appear on the wire, so aliased
 # fields are listed under their alias. IP addresses and user agents are kept.
@@ -136,20 +144,42 @@ def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
     return crumb
 
 
+def _safe_token(value: str) -> bool:
+    return bool(_UUID.fullmatch(value) or _WORD.fullmatch(value))
+
+
+def _safe_path(path: str) -> str:
+    segments = [
+        segment if not segment or _safe_token(segment) else REDACTED
+        for segment in path.split("/")
+    ]
+    return "/".join(segments)
+
+
+def _safe_body_value(value: object) -> object:
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    if isinstance(value, str):
+        return value if _safe_token(value) else REDACTED
+    return OMITTED
+
+
 def _tag_request(event: Event, request: dict[str, object]) -> None:
     # Alert triage tools read event tags, not the request entry, and the URL is
-    # cut to its origin below. Copy the method, path and scrubbed body first,
-    # e.g. PATCH /v1/subscriptions/<id> {"product_id": ..., "proration_behavior": ...}.
+    # cut to its origin below. Copy the method, the path and the top-level body
+    # fields first, keeping only ids and route/enum words, e.g.
+    # PATCH /v1/subscriptions/<uuid> {"product_id": "<uuid>", "proration_behavior": "prorate"}.
     tags: dict[str, str] = {}
     method = request.get("method")
     if isinstance(method, str):
         tags["request.method"] = method
     url = request.get("url")
     if isinstance(url, str):
-        tags["request.path"] = urlsplit(url).path[:TAG_VALUE_MAX]
+        tags["request.path"] = _safe_path(urlsplit(url).path)[:TAG_VALUE_MAX]
     data = request.get("data")
-    if isinstance(data, (dict, list)):
-        tags["request.body"] = json.dumps(data, sort_keys=True)[:TAG_VALUE_MAX]
+    if isinstance(data, dict):
+        body = {str(key): _safe_body_value(value) for key, value in data.items()}
+        tags["request.body"] = json.dumps(body, sort_keys=True)[:TAG_VALUE_MAX]
     if not tags:
         return
     event.setdefault("tags", {}).update(tags)

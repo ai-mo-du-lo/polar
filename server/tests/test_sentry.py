@@ -225,7 +225,7 @@ class TestRequestTags:
     def test_tags_method_path_and_scrubbed_body(self) -> None:
         event = {
             "request": {
-                "url": "https://api.polar.sh/v1/subscriptions/sub-1?customer_email=buyer@example.com",
+                "url": "https://api.polar.sh/v1/subscriptions/0b6f0b6e-6c1e-4f8e-9d5a-2f1c3e4d5a6b?customer_email=buyer@example.com",
                 "method": "PATCH",
                 "data": {
                     "product_id": "prod-2",
@@ -240,19 +240,57 @@ class TestRequestTags:
         assert result is not None
         tags = cast(dict[str, Any], result["tags"])
         assert tags["request.method"] == "PATCH"
-        assert tags["request.path"] == "/v1/subscriptions/sub-1"
+        assert tags["request.path"] == (
+            "/v1/subscriptions/0b6f0b6e-6c1e-4f8e-9d5a-2f1c3e4d5a6b"
+        )
         assert tags["request.body"] == (
             '{"product_id": "prod-2", "proration_behavior": "prorate"}'
         )
-        assert "sub-1" not in str(cast(dict[str, Any], result["request"])["url"])
+        assert "0b6f0b6e" not in str(cast(dict[str, Any], result["request"])["url"])
 
     def test_truncates_body_to_the_tag_value_limit(self) -> None:
-        event = {"request": {"method": "POST", "data": {"note": "x" * 500}}}
+        event = {"request": {"method": "POST", "data": {"k" * 300: 1}}}
 
         result = before_send(cast(Any, event), {})
 
         assert result is not None
         assert len(cast(dict[str, Any], result["tags"])["request.body"]) == 200
+
+    def test_redacts_path_segments_that_are_not_ids_or_route_words(self) -> None:
+        event = {
+            "request": {
+                "method": "POST",
+                "url": "https://api.polar.sh/v1/checkouts/client/polar_c_AbC123xyz/confirm",
+            }
+        }
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        path = cast(dict[str, Any], result["tags"])["request.path"]
+        assert path == "/v1/checkouts/client/{redacted}/confirm"
+
+    def test_body_keeps_only_safe_top_level_values(self) -> None:
+        event = {
+            "request": {
+                "method": "PATCH",
+                "data": {
+                    "seats": 2,
+                    "cancel": True,
+                    "label": "Call Test Buyer",
+                    "items": {"city": "Austin"},
+                    "reference": "polar_oat_AbCdEf123",
+                },
+            }
+        }
+
+        result = before_send(cast(Any, event), {})
+
+        assert result is not None
+        assert cast(dict[str, Any], result["tags"])["request.body"] == (
+            '{"cancel": true, "items": "{omitted}", "label": "{redacted}", '
+            '"reference": "{redacted}", "seats": 2}'
+        )
 
     def test_keeps_existing_tags(self) -> None:
         event = {
