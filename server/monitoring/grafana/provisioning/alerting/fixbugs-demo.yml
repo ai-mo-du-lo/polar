@@ -46,5 +46,6 @@ groups:
           summary: "{{ $labels.method }} {{ $labels.endpoint }} returns 5xx"
           description: "Server errors on {{ $labels.method }} {{ $labels.endpoint }} in the last 2 minutes."
           expression: *polar_5xx_expr
-          rule_revision: "2026-11-18.1"
+          rule_revision: "2026-11-20.1"
+          runbook_url: "https://raw.githubusercontent.com/ai-mo-du-lo/polar/2960525191a721d0698a131b024a0e025fe2369c/docs/runbooks/polar-endpoint-5xx.md"
           exception: "{{ $labels.exception }}"
