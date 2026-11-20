@@ -29,8 +29,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (endpoint, method, env) (increase(polar_http_request_total{status_code=~\"5..\"}[2m])) > 0\nor\nsum by (endpoint, method, env) (\n  polar_http_request_total{status_code=~\"5..\"}\n  unless polar_http_request_total{status_code=~\"5..\"} offset 2m\n) > 0",
-          "legendFormat": "{{method}} {{endpoint}}"
+          "expr": "sum by (endpoint, method, env, exception) (increase(polar_http_request_total{status_code=~\"5..\"}[2m])) > 0\nor\nsum by (endpoint, method, env, exception) (\n  polar_http_request_total{status_code=~\"5..\"}\n  unless polar_http_request_total{status_code=~\"5..\"} offset 2m\n) > 0",
+          "legendFormat": "{{method}} {{endpoint}} {{exception}}"
         }
       ],
       "fieldConfig": {
